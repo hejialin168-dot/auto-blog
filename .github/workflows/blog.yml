@@ -1,112 +1,66 @@
-name: Auto WordPress Blog Publisher
+name: Auto Blog Publisher
 
 on:
   schedule:
-    - cron: '0 13 * * *'
-  workflow_dispatch:
-
-permissions:
-  contents: write
+    - cron: "0 13 * * *"   # 每天北京时间 21:00 自动运行
+  workflow_dispatch:        # 允许手动运行
 
 jobs:
-  publish:
+  generate_and_publish:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v3
-      - name: Set up Python
-        uses: actions/setup-python@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.x'
+          python-version: '3.10'
+
       - name: Install dependencies
-        run: pip install openai requests pandas markdown
-      - name: Generate and publish blog
+        run: |
+          pip install openai markdown requests pandas
+
+      - name: Generate Blog and Publish
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          WP_URL: ${{ secrets.WP_URL }}
           WP_USER: ${{ secrets.WP_USER }}
           WP_APP_PASS: ${{ secrets.WP_APP_PASS }}
+          WP_URL: ${{ secrets.WP_URL }}
         run: |
-          import pandas as pd
-          import openai
-          import requests
-          import markdown
-          import random
-          import os
+          python <<'EOF'
+          import openai, os, pandas as pd, requests, markdown, random
 
-          # 读取关键词 CSV 文件
-          df = pd.read_csv('keywords.csv')
-          # 筛选出尚未发布的关键词
-          unpublished_df = df[df['status'].fillna('') != '已发布']
-          if unpublished_df.empty:
-              print("没有未发布的关键词，跳过。")
-              exit(0)
+          # 读取环境变量
+          openai.api_key = os.getenv("OPENAI_API_KEY")
+          wp_url = os.getenv("WP_URL") + "/wp-json/wp/v2/posts"
+          auth = (os.getenv("WP_USER"), os.getenv("WP_APP_PASS"))
 
-          # 选取第一个尚未发布的关键词
-          keyword = unpublished_df.iloc[0]['keyword']
-          print(f"Selected keyword: {keyword}")
+          # 读取关键词表
+          df = pd.read_csv("keywords.csv")
+          row = df.sample(1).iloc[0]
+          keyword = row["keyword"]
+          lang = row.get("language", "en")
 
-          # 设置 OpenAI API 密钥并准备提示词
-          openai.api_key = os.environ['OPENAI_API_KEY']
-          prompt = f"Write an English blog post about '{keyword}'. The post should have a clear title, a short introduction, and a body of 300-500 words."
-          try:
-              response = openai.ChatCompletion.create(
-                  model="gpt-3.5-turbo",
-                  messages=[{"role": "user", "content": prompt}]
-              )
-              content = response['choices'][0]['message']['content']
-          except Exception as e:
-              print(f"OpenAI API error: {e}")
-              exit(1)
+          print(f"Generating blog for: {keyword} ({lang})")
 
-          # 从返回内容中提取标题和正文
-          lines = [line.strip() for line in content.splitlines() if line.strip()]
-          title_line = lines[0]
-          # 如果标题行包含 "Title:" 前缀，则去除
-          if title_line.lower().startswith("title"):
-              title_line = title_line.split(':', 1)[1].strip()
-          title = title_line
-          body_markdown = "\n".join(lines[1:]) if len(lines) > 1 else ""
-          # 将正文 Markdown 转换为 HTML
-          body_html = markdown.markdown(body_markdown)
+          # 调用 OpenAI 生成文章
+          prompt = f"Write an SEO-optimized blog post in {lang} about {keyword}, with headings and 300-500 words."
+          response = openai.ChatCompletion.create(
+              model="gpt-3.5-turbo",
+              messages=[{"role": "user", "content": prompt}]
+          )
 
-          # 准备 WordPress 文章数据
-          post_data = {
-              "title": title,
-              "content": body_html,
+          blog_text = response['choices'][0]['message']['content'].strip()
+          html_content = markdown.markdown(blog_text)
+
+          # 发布到 WordPress
+          data = {
+              "title": f"Blog about {keyword}",
+              "content": html_content,
               "status": "publish"
           }
-          # 将关键词作为标签（WordPress API 通常使用标签ID，这里假设标签已存在）
-          post_data["tags"] = [keyword]
 
-          # 通过 WordPress REST API 发布文章
-          wp_url = os.environ['WP_URL'].rstrip('/')
-          api_endpoint = f"{wp_url}/wp-json/wp/v2/posts"
-          wp_user = os.environ['WP_USER']
-          wp_pass = os.environ['WP_APP_PASS']
-          try:
-              res = requests.post(api_endpoint, json=post_data, auth=(wp_user, wp_pass))
-              res.raise_for_status()
-          except Exception as e:
-              print(f"Failed to create post: {e}")
-              print(f"Response: {res.text}")
-              exit(1)
-          post = res.json()
-          print(f"Post published (ID: {post.get('id')}).")
-
-          # 标记该关键词为已发布
-          df.loc[df['keyword'] == keyword, 'status'] = '已发布'
-          df.to_csv('keywords.csv', index=False)
-      - name: Commit changes
-        run: |
-          # 提交 CSV 更新并推送
-          if [ -z "$(git status --porcelain)" ]; then
-            echo "无需要提交的更改."
-            exit 0
-          fi
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add keywords.csv
-          git commit -m "Mark keyword as published"
-          git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          r = requests.post(wp_url, auth=auth, json=data)
+          print("Published:", r.status_code, r.text)
+          EOF
