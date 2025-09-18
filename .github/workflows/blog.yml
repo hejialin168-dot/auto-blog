@@ -2,65 +2,31 @@ name: Auto Blog Publisher
 
 on:
   schedule:
-    - cron: "0 13 * * *"   # 每天北京时间 21:00 自动运行
-  workflow_dispatch:        # 允许手动运行
+    - cron: "0 13 * * *"   # 每天北京时间21:00
+  workflow_dispatch:        # 支持手动运行
 
 jobs:
-  generate_and_publish:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.9'
 
       - name: Install dependencies
         run: |
-          pip install openai markdown requests pandas
+          pip install openai==0.28 requests pandas
 
-      - name: Generate Blog and Publish
+      - name: Run Auto Blog Script
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           WP_USER: ${{ secrets.WP_USER }}
           WP_APP_PASS: ${{ secrets.WP_APP_PASS }}
           WP_URL: ${{ secrets.WP_URL }}
         run: |
-          python <<'EOF'
-          import openai, os, pandas as pd, requests, markdown, random
-
-          # 读取环境变量
-          openai.api_key = os.getenv("OPENAI_API_KEY")
-          wp_url = os.getenv("WP_URL") + "/wp-json/wp/v2/posts"
-          auth = (os.getenv("WP_USER"), os.getenv("WP_APP_PASS"))
-
-          # 读取关键词表
-          df = pd.read_csv("keywords.csv")
-          row = df.sample(1).iloc[0]
-          keyword = row["keyword"]
-          lang = row.get("language", "en")
-
-          print(f"Generating blog for: {keyword} ({lang})")
-
-          # 调用 OpenAI 生成文章
-          prompt = f"Write an SEO-optimized blog post in {lang} about {keyword}, with headings and 300-500 words."
-          response = openai.ChatCompletion.create(
-              model="gpt-3.5-turbo",
-              messages=[{"role": "user", "content": prompt}]
-          )
-
-          blog_text = response['choices'][0]['message']['content'].strip()
-          html_content = markdown.markdown(blog_text)
-
-          # 发布到 WordPress
-          data = {
-              "title": f"Blog about {keyword}",
-              "content": html_content,
-              "status": "publish"
-          }
-
-          r = requests.post(wp_url, auth=auth, json=data)
-          print("Published:", r.status_code, r.text)
-          EOF
+          python blog.py
