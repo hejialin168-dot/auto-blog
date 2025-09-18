@@ -2,8 +2,8 @@ name: Auto Blog Publisher
 
 on:
   schedule:
-    - cron: "0 13 * * *"   # 每天北京时间 21:00 自动运行
-  workflow_dispatch:        # 允许手动运行
+    - cron: "0 13 * * *"   # 每天北京时间 21:00 自动运行 (UTC 13:00)
+  workflow_dispatch:        # 手动运行
 
 jobs:
   generate_and_publish:
@@ -25,7 +25,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           WP_USER: ${{ secrets.WP_USER }}
           WP_APP_PASS: ${{ secrets.WP_APP_PASS }}
-          WP_URL: ${{ secrets.WP_URL }}
+          WP_URL: "${{ secrets.WP_URL }}"
         run: |
           python <<'EOF'
 import openai, os, pandas as pd, requests, markdown, random
