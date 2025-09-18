@@ -1,0 +1,69 @@
+name: Auto Blog Publisher
+
+on:
+  schedule:
+    - cron: "0 13 * * *"   # 每天北京时间 21:00 自动运行 (UTC+0 = 13:00)
+  workflow_dispatch:        # 允许手动运行
+
+jobs:
+  generate_and_publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install openai markdown requests pandas
+
+      - name: Generate Blog and Publish
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          WP_USER: ${{ secrets.WP_USER }}
+          WP_APP_PASS: ${{ secrets.WP_APP_PASS }}
+          WP_URL: https://yourdomain.com   # 改成你的网站地址
+        run: |
+          python <<'EOF'
+import openai, os, pandas as pd, requests, markdown, random
+
+# 读取环境变量
+openai.api_key = os.getenv("OPENAI_API_KEY")
+wp_url = os.getenv("WP_URL") + "/wp-json/wp/v2/posts"
+auth = (os.getenv("WP_USER"), os.getenv("WP_APP_PASS"))
+
+# 读取关键词表
+df = pd.read_csv("keywords.csv")
+
+# 随机选择一个关键词（每天发一篇）
+row = df.sample(1).iloc[0]
+keyword = row["keyword"]
+lang = row.get("language", "en")
+
+print(f"Generating blog for: {keyword} ({lang})")
+
+# 调用 OpenAI 生成文章
+prompt = f"写一篇关于 {keyword} 的SEO优化博客文章，要求分段加小标题，字数1000字，语言：{lang}"
+response = openai.Completion.create(
+    model="text-davinci-003",
+    prompt=prompt,
+    max_tokens=1000,
+    temperature=0.7
+)
+
+blog_text = response.choices[0].text.strip()
+html_content = markdown.markdown(blog_text)
+
+# 发布到 WordPress
+data = {
+    "title": f"关于 {keyword} 的博客",
+    "content": html_content,
+    "status": "publish"
+}
+
+r = requests.post(wp_url, auth=auth, json=data)
+print("Published:", r.status_code, r.text)
+EOF
